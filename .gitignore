@@ -1,20 +1,3 @@
-feat: XREAL SDKを用いたOST向け6DoF ARシューティングゲームのコアロジックを実装
-
-- TargetObject.csを実装
-  - 通常時の非表示マテリアル（黒＝透明）とライト照射時の発光（Emission）制御
-  - 被弾時の二重被弾防止（コライダー無効）、ビジュアル非表示（レンダラー無効）
-  - 被弾演出（SE・パーティクルの再生）完了後の遅延オブジェクト破棄
-
-- BeamProController.csを実装および可視化機能を拡張
-  - トリガー入力検知（新Input System、XREALInput、Pointer APIによる統合）
-  - エイムアシスト射撃機能（SphereCastによる判定の補正）
-  - 射撃時・命中時のXREALVirtualControllerを使用したバイブレーション制御
-  - HMD起動時の6DoFトラッキングモードへの自動切り替えリクエストの追加
-  - LineRendererによるライトコーン、物理スポットライト、および照射点へのレティクル投影による可視化を実装
-
-- .gitignoreの最適化
-  - macOSやWindowsの環境依存一時ファイルの無視ルールを追加
-  - Unity Burstコンパイラのデバッグフォルダ（*_BurstDebugInformation_DoNotShip）を無視対象に追加# This .gitignore file should be placed at the root of your Unity project directory
 #
 # Get latest from https://github.com/github/gitignore/blob/main/Unity.gitignore
 #
