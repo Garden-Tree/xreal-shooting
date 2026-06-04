@@ -29,6 +29,14 @@ namespace Unity.XR.XREAL.Samples
         public GameState CurrentState => m_CurrentState;
 
         [Header("ゲームモード設定")]
+        [Tooltip("生成する的のプレハブ")]
+        [SerializeField]
+        private TargetObject m_TargetPrefab;
+
+        [Tooltip("ゲーム開始時に生成する的のプールサイズ")]
+        [SerializeField]
+        private int m_PoolSize = 10;
+
         [Tooltip("的がポップする候補位置のTransform配列")]
         [SerializeField]
         private Transform[] m_SpawnPoints;
@@ -116,14 +124,22 @@ namespace Unity.XR.XREAL.Samples
                 });
             }
 
-            // シーン内のすべての的（TargetObject）を取得・追跡（非アクティブなオブジェクトも含む）
-            m_Targets = Object.FindObjectsByType<TargetObject>(FindObjectsInactive.Include, FindObjectsSortMode.None);
-            Debug.Log($"[GameManager] {m_Targets.Length}個の的オブジェクトを検出しました。");
-            
-            // 初期状態はすべての的を非アクティブにしてプール化
-            foreach (var target in m_Targets)
+            // プレハブから的をインスタンス化してプールを構築
+            if (m_TargetPrefab != null)
             {
-                target.gameObject.SetActive(false);
+                m_Targets = new TargetObject[m_PoolSize];
+                for (int i = 0; i < m_PoolSize; i++)
+                {
+                    TargetObject instance = Instantiate(m_TargetPrefab, Vector3.zero, Quaternion.identity, transform);
+                    instance.gameObject.SetActive(false);
+                    m_Targets[i] = instance;
+                }
+                Debug.Log($"[GameManager] {m_PoolSize}個の的オブジェクトをインスタンス化し、プールに登録しました。");
+            }
+            else
+            {
+                Debug.LogError("[GameManager] TargetPrefab が設定されていません！インスペクターから設定してください。");
+                m_Targets = new TargetObject[0];
             }
 
             // 開始時に案内UIを表示し、メッセージを設定
