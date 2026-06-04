@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
 
@@ -36,8 +37,8 @@ namespace Unity.XR.XREAL.Samples
 
         private XREALActions m_XREALActions;
 
-        [Header("フラッシュライト可視化設定")]
-        [Tooltip("ライトコーン（光線）の描画に LineRenderer を使用するかどうか")]
+        [Header("フラッシュライト可視化設定 (ボリュメトリック風)")]
+        [Tooltip("ライトコーン（光線）の描画にカスタムメッシュを使用するかどうか")]
         [SerializeField]
         private bool m_UseLightBeamVisual = true;
 
@@ -49,27 +50,32 @@ namespace Unity.XR.XREAL.Samples
         [SerializeField]
         private float m_LightBeamWidthEnd = 1.2f;
 
-        [Tooltip("ライトコーン用マテリアル。未設定の場合は半透明の薄い黄色マテリアルが動的に作成されます。")]
+        [Tooltip("ライトコーン用マテリアル。未設定の場合は加算合成の動的マテリアルを作成します。")]
         [SerializeField]
         private Material m_LightBeamMaterial;
+
+        [Tooltip("ライトコーンの基本カラー")]
+        [SerializeField]
+        private Color m_LightColor = new Color(1f, 0.9f, 0.6f, 1f);
+
+        [Tooltip("メッシュの分割数（円の滑らかさ）")]
+        [SerializeField]
+        private int m_BeamSegments = 16;
 
         [Tooltip("物理スポットライトの強さ")]
         [SerializeField]
         private float m_SpotLightIntensity = 8f;
 
-        [Tooltip("物理スポットライトの角度（度）")]
-        [SerializeField]
-        private float m_SpotLightAngle = 25f;
-
-        [Tooltip("照射位置（ヒットポイント）に表示するレティクル（光の輪）のプレハブ")]
-        [SerializeField]
-        private GameObject m_LightReticlePrefab;
-
-        private LineRenderer m_LineRenderer;
         private Light m_SpotLight;
-        private GameObject m_ReticleInstance;
         private Material m_DynamicBeamMaterial;
-        private Material m_DynamicReticleMaterial;
+
+        // --- カスタムコーンメッシュ関連 ---
+        private MeshFilter m_BeamMeshFilter;
+        private MeshRenderer m_BeamMeshRenderer;
+        private Mesh m_BeamMesh;
+        private Vector3[] m_BeamVertices;
+        private Color32[] m_BeamColors;
+        private int[] m_BeamIndices;
 
         [Header("バイブレーション設定")]
         [Tooltip("射撃時のバイブレーションの強度 (0.0 ～ 1.0)")]
@@ -114,7 +120,6 @@ namespace Unity.XR.XREAL.Samples
                     GameObject controller = GameObject.Find("Right Controller");
                     if (controller != null)
                     {
-                        // Ray Interactor または Near-Far Interactor をポインターの起点として使用
                         m_PointerTransform = controller.transform.Find("Ray Interactor");
                         if (m_PointerTransform == null)
                         {
@@ -139,7 +144,6 @@ namespace Unity.XR.XREAL.Samples
 
         private void OnDisable()
         {
-            // 自動生成されたインプットアクションクラスの無効化と破棄
             if (m_XREALActions != null)
             {
                 m_XREALActions.Disable();
@@ -169,108 +173,87 @@ namespace Unity.XR.XREAL.Samples
         }
 
         /// <summary>
-        /// コントローラーからRaycastを飛ばし、ヒットしたTargetObjectを発光（SetLit）させます。
-        /// 同時に、スポットライトビームと照射位置のレティクル（光の輪）を更新します。
+        /// ボリュメトリックライトコーンメッシュの更新と、物理スポットライトの角度同期を行います。
         /// </summary>
         private void PerformFlashlightDiscovery()
         {
-            Ray ray = new Ray(m_PointerTransform.position, m_PointerTransform.forward);
-            RaycastHit hit;
-            bool didHit = Physics.Raycast(ray, out hit, m_MaxDiscoveryDistance, m_TargetLayerMask);
-
-            float targetDistance = m_MaxDiscoveryDistance;
-
-            if (didHit)
+            // カスタムメッシュでボリュメトリックライトコーンを描画 (常に一定の長さ)
+            if (m_UseLightBeamVisual && m_BeamMesh != null)
             {
-                targetDistance = hit.distance;
-                if (hit.collider.TryGetComponent<TargetObject>(out var target))
-                {
-                    target.SetLit();
-                }
-
-                // 照射位置にレティクル（光の輪）を投影
-                m_ReticleInstance.SetActive(true);
-                m_ReticleInstance.transform.position = hit.point + hit.normal * 0.02f; // 壁にめり込まないように少し浮かせる
-                m_ReticleInstance.transform.rotation = Quaternion.LookRotation(-hit.normal); // 面の法線方向に向ける
-                
-                // 距離に応じたサイズスケーリング（円錐光の広がりをシミュレート）
-                float scale = Mathf.Lerp(m_LightBeamWidthStart, m_LightBeamWidthEnd, hit.distance / m_MaxDiscoveryDistance);
-                m_ReticleInstance.transform.localScale = Vector3.one * scale;
-            }
-            else
-            {
-                m_ReticleInstance.SetActive(false);
+                UpdateBeamMesh(m_MaxDiscoveryDistance);
             }
 
-            // LineRendererでライトビーム（光線）を描画
-            if (m_UseLightBeamVisual)
+            // SpotLightの角度も常にLightBeamWidthEndとMaxDiscoveryDistanceから同期させる
+            if (m_SpotLight != null)
             {
-                m_LineRenderer.SetPosition(0, m_PointerTransform.position);
-                m_LineRenderer.SetPosition(1, m_PointerTransform.position + m_PointerTransform.forward * targetDistance);
-
-                // 照射距離に合わせて先端の太さをスケーリング
-                float dynamicEndWidth = Mathf.Lerp(m_LightBeamWidthStart, m_LightBeamWidthEnd, targetDistance / m_MaxDiscoveryDistance);
-                m_LineRenderer.endWidth = dynamicEndWidth;
+                float halfAngle = Mathf.Atan2(m_LightBeamWidthEnd, m_MaxDiscoveryDistance) * Mathf.Rad2Deg;
+                m_SpotLight.spotAngle = halfAngle * 2f;
             }
 
-            // デバッグ表示用（エディタのSceneビューで緑色のレーザーラインを表示）
             Debug.DrawRay(m_PointerTransform.position, m_PointerTransform.forward * m_MaxDiscoveryDistance, Color.green);
         }
 
         /// <summary>
-        /// エイムアシスト付きの射撃処理を行います。
+        /// ボリュメトリックライト風のコーンメッシュを生成・更新します。
         /// </summary>
+        private void UpdateBeamMesh(float distance)
+        {
+            float dynamicEndWidth = Mathf.Lerp(m_LightBeamWidthStart, m_LightBeamWidthEnd, distance / m_MaxDiscoveryDistance);
+            
+            // 頂点の更新 (ローカル座標系)
+            // 0: Start Center
+            // 1: End Center
+            // 2 ~ : Start Outer Rings
+            // 2+Segments ~ : End Outer Rings
+
+            m_BeamVertices[0] = Vector3.zero;
+            m_BeamVertices[1] = Vector3.forward * distance;
+
+            for (int i = 0; i < m_BeamSegments; i++)
+            {
+                float angle = (i / (float)m_BeamSegments) * Mathf.PI * 2f;
+                float x = Mathf.Cos(angle);
+                float y = Mathf.Sin(angle);
+
+                // Start Outer
+                m_BeamVertices[i + 2] = new Vector3(x * m_LightBeamWidthStart, y * m_LightBeamWidthStart, 0f);
+                // End Outer
+                m_BeamVertices[i + 2 + m_BeamSegments] = new Vector3(x * dynamicEndWidth, y * dynamicEndWidth, distance);
+            }
+
+            m_BeamMesh.vertices = m_BeamVertices;
+            
+            // Boundsを更新してカリングされないようにする
+            m_BeamMesh.RecalculateBounds();
+        }
+
         private void Shoot()
         {
-            // 1. 射撃時のバイブレーションフィードバック
             TriggerHaptic(m_ShootVibrationAmplitude, m_ShootVibrationDuration);
 
-            // 2. 射撃音の再生
             if (m_ShootSound != null) m_AudioSource.PlayOneShot(m_ShootSound);
 
-            // 3. エイムアシスト機能 (SphereCast)
             Ray ray = new Ray(m_PointerTransform.position, m_PointerTransform.forward);
             RaycastHit hit;
 
-            // 太いレーザー（SphereCast）を飛ばして手ブレを補正
             if (Physics.SphereCast(ray, m_AimAssistRadius, out hit, m_MaxShootDistance, m_TargetLayerMask))
             {
                 if (hit.collider.TryGetComponent<TargetObject>(out var target))
                 {
-                    // ターゲットのヒット時演出と自己破棄を実行
                     target.OnHit();
-
-                    // 4. 命中時のバイブレーションフィードバック（より強く、長く）
                     TriggerHaptic(m_HitVibrationAmplitude, m_HitVibrationDuration);
                 }
             }
         }
 
-        /// <summary>
-        /// トリガー入力（画面タップ）がこのフレームで行われたかを判定します。
-        /// </summary>
         private bool IsTriggerPressedThisFrame()
         {
-            // (A) 自動生成された XREALActions クラスによる Trigger 検知
             if (m_XREALActions.XREALButtons.Trigger.WasPressedThisFrame()) return true;
-
-            // (B) 既存の XREALInput が有効な場合のフォールバック（LegacyTools対応）
             if (XREALInput.GetButtonDown(ControllerButton.TRIGGER)) return true;
-
-            // (C) エディタ内テストおよび画面タッチ用のマウスボタン・タップ検知
-            if (Pointer.current != null && Pointer.current.press.wasPressedThisFrame)
-            {
-                return true;
-            }
-
+            if (Pointer.current != null && Pointer.current.press.wasPressedThisFrame) return true;
             return false;
         }
 
-        /// <summary>
-        /// XREAL SDK準拠のバイブレーションを送信します。
-        /// </summary>
-        /// <param name="amplitude">強度 (0.0 ～ 1.0)</param>
-        /// <param name="duration">持続時間（秒）</param>
         private void TriggerHaptic(float amplitude, float duration)
         {
             if (XREALVirtualController.Singleton?.Controller != null)
@@ -285,18 +268,15 @@ namespace Unity.XR.XREAL.Samples
 
         private void OnDrawGizmosSelected()
         {
-            // インスペクターで選択中、Sceneビューでエイムアシストの太さ（SphereCastの範囲）を可視化
             if (m_PointerTransform == null) return;
 
             Gizmos.color = new Color(1f, 0f, 0f, 0.3f);
             Vector3 origin = m_PointerTransform.position;
             Vector3 endPoint = origin + m_PointerTransform.forward * m_MaxShootDistance;
 
-            // 始点と終点の球体
             Gizmos.DrawWireSphere(origin, m_AimAssistRadius);
             Gizmos.DrawWireSphere(endPoint, m_AimAssistRadius);
 
-            // 始点から終点への境界線を描画
             Vector3 up = m_PointerTransform.up * m_AimAssistRadius;
             Vector3 right = m_PointerTransform.right * m_AimAssistRadius;
 
@@ -306,9 +286,6 @@ namespace Unity.XR.XREAL.Samples
             Gizmos.DrawLine(origin - right, endPoint - right);
         }
 
-        /// <summary>
-        /// フラッシュライトの物理ライト、ライトコーン（光線）、およびレティクルを初期化します。
-        /// </summary>
         private void InitializeFlashlightVisuals()
         {
             if (m_PointerTransform == null) return;
@@ -320,77 +297,112 @@ namespace Unity.XR.XREAL.Samples
             }
             m_SpotLight.type = LightType.Spot;
             m_SpotLight.range = m_MaxDiscoveryDistance;
-            m_SpotLight.spotAngle = m_SpotLightAngle;
+            
+            // LightBeamWidthEnd と MaxDiscoveryDistance から SpotAngle を自動計算
+            float halfAngle = Mathf.Atan2(m_LightBeamWidthEnd, m_MaxDiscoveryDistance) * Mathf.Rad2Deg;
+            m_SpotLight.spotAngle = halfAngle * 2f;
+            
             m_SpotLight.intensity = m_SpotLightIntensity;
-            m_SpotLight.color = new Color(1f, 0.95f, 0.8f); // 暖かみのある白
+            m_SpotLight.color = new Color(1f, 0.95f, 0.8f);
 
-            // 2. LineRenderer（ライトビーム）の追加・設定
+            // 2. カスタムメッシュ（ボリュメトリックライト風）の追加・設定
             if (m_UseLightBeamVisual)
             {
-                if (!m_PointerTransform.TryGetComponent(out m_LineRenderer))
-                {
-                    m_LineRenderer = m_PointerTransform.gameObject.AddComponent<LineRenderer>();
-                }
-                m_LineRenderer.positionCount = 2;
-                
+                GameObject beamObj = new GameObject("LightBeamMesh");
+                beamObj.transform.SetParent(m_PointerTransform, false);
+                beamObj.transform.localPosition = Vector3.zero;
+                beamObj.transform.localRotation = Quaternion.identity;
+
+                m_BeamMeshFilter = beamObj.AddComponent<MeshFilter>();
+                m_BeamMeshRenderer = beamObj.AddComponent<MeshRenderer>();
+                m_BeamMesh = new Mesh();
+                m_BeamMesh.name = "VolumetricBeamMesh";
+                m_BeamMesh.MarkDynamic();
+
+                InitializeBeamMeshStruct();
+                m_BeamMeshFilter.mesh = m_BeamMesh;
+
                 if (m_LightBeamMaterial == null)
                 {
-                    m_DynamicBeamMaterial = new Material(Shader.Find("Sprites/Default"));
-                    m_DynamicBeamMaterial.color = new Color(1f, 0.9f, 0.5f, 0.12f);
+                    // URP環境でも確実に「頂点カラーによるグラデーション」と「半透明」が動作する
+                    // Sprites/Default シェーダーを基本として使用します。
+                    // （Sprites/Defaultは標準でZWrite Off, Alpha Blend, Cull Offとなっており安全です）
+                    Shader shader = Shader.Find("Sprites/Default");
+
+                    m_DynamicBeamMaterial = new Material(shader);
                     m_LightBeamMaterial = m_DynamicBeamMaterial;
                 }
                 
-                m_LineRenderer.material = m_LightBeamMaterial;
-                m_LineRenderer.startWidth = m_LightBeamWidthStart;
-                m_LineRenderer.endWidth = m_LightBeamWidthEnd;
-
-                // フェードアウトするカラーグラデーション
-                Gradient gradient = new Gradient();
-                gradient.SetKeys(
-                    new GradientColorKey[] { new GradientColorKey(Color.white, 0.0f), new GradientColorKey(new Color(1f, 0.9f, 0.5f), 1.0f) },
-                    new GradientAlphaKey[] { new GradientAlphaKey(0.15f, 0.0f), new GradientAlphaKey(0.0f, 1.0f) }
-                );
-                m_LineRenderer.colorGradient = gradient;
+                m_BeamMeshRenderer.material = m_LightBeamMaterial;
             }
+        }
 
-            // 3. 照射位置表示用レティクルの初期化
-            if (m_LightReticlePrefab != null)
+        private void InitializeBeamMeshStruct()
+        {
+            int vertexCount = 2 + m_BeamSegments * 2;
+            m_BeamVertices = new Vector3[vertexCount];
+            m_BeamColors = new Color32[vertexCount];
+            
+            // 頂点カラーの設定 (アルファフェード)
+            Color32 startCenterColor = new Color(m_LightColor.r, m_LightColor.g, m_LightColor.b, 0f * m_LightColor.a); // 根本中心を完全に透明に
+            Color32 endCenterColor = new Color(m_LightColor.r, m_LightColor.g, m_LightColor.b, 0.5f * m_LightColor.a); // 底面中心
+            Color32 startOuterColor = new Color(m_LightColor.r, m_LightColor.g, m_LightColor.b, 0f * m_LightColor.a); // 根本の側面を完全に透明に
+            Color32 endOuterColor = new Color(m_LightColor.r, m_LightColor.g, m_LightColor.b, 0.05f * m_LightColor.a); // 先端の側面（非常に薄く）
+
+            m_BeamColors[0] = startCenterColor; // Start Center
+            m_BeamColors[1] = endCenterColor; // End Center (底面)
+
+            for (int i = 0; i < m_BeamSegments; i++)
             {
-                m_ReticleInstance = Instantiate(m_LightReticlePrefab);
+                m_BeamColors[i + 2] = startOuterColor; // Start Outer Rings
+                m_BeamColors[i + 2 + m_BeamSegments] = endOuterColor; // End Outer Rings
             }
-            else
-            {
-                // レティクルプレハブが未指定の場合、簡易的な円（クアッド）を自動生成
-                m_ReticleInstance = GameObject.CreatePrimitive(PrimitiveType.Quad);
-                m_ReticleInstance.name = "FlashlightReticle";
-                
-                Destroy(m_ReticleInstance.GetComponent<Collider>());
-                
-                Renderer rend = m_ReticleInstance.GetComponent<Renderer>();
-                m_DynamicReticleMaterial = new Material(Shader.Find("Sprites/Default"));
-                m_DynamicReticleMaterial.color = new Color(1f, 0.95f, 0.6f, 0.3f);
-                rend.material = m_DynamicReticleMaterial;
 
-                m_ReticleInstance.transform.localScale = Vector3.one * m_LightBeamWidthEnd;
+            // インデックス配列の生成
+            // 1セグメントあたり: 
+            // 始点キャップ(手前): 3
+            // 側面: 6
+            // 終点キャップ(底面): 3
+            int trianglesPerSegment = 3 + 6 + 3;
+            m_BeamIndices = new int[m_BeamSegments * trianglesPerSegment];
+
+            int idx = 0;
+            for (int i = 0; i < m_BeamSegments; i++)
+            {
+                int currentOuter = i + 2;
+                int nextOuter = ((i + 1) % m_BeamSegments) + 2;
+                int currentEnd = currentOuter + m_BeamSegments;
+                int nextEnd = nextOuter + m_BeamSegments;
+
+                // Start Cap (手前の面 - 時計回り)
+                m_BeamIndices[idx++] = 0;
+                m_BeamIndices[idx++] = currentOuter;
+                m_BeamIndices[idx++] = nextOuter;
+
+                // Side (側面 - 外側に向けて描画)
+                m_BeamIndices[idx++] = currentOuter;
+                m_BeamIndices[idx++] = currentEnd;
+                m_BeamIndices[idx++] = nextOuter;
+
+                m_BeamIndices[idx++] = nextOuter;
+                m_BeamIndices[idx++] = currentEnd;
+                m_BeamIndices[idx++] = nextEnd;
+
+                // End Cap (奥の底面 - 反時計回り)
+                m_BeamIndices[idx++] = 1;
+                m_BeamIndices[idx++] = nextEnd;
+                m_BeamIndices[idx++] = currentEnd;
             }
-            m_ReticleInstance.SetActive(false);
+
+            m_BeamMesh.vertices = m_BeamVertices;
+            m_BeamMesh.colors32 = m_BeamColors;
+            m_BeamMesh.triangles = m_BeamIndices;
         }
 
         private void OnDestroy()
         {
-            // 動的マテリアルの破棄（メモリリーク防止）
-            if (m_DynamicBeamMaterial != null)
-            {
-                Destroy(m_DynamicBeamMaterial);
-            }
-            if (m_DynamicReticleMaterial != null)
-            {
-                Destroy(m_DynamicReticleMaterial);
-            }
-            if (m_ReticleInstance != null)
-            {
-                Destroy(m_ReticleInstance);
-            }
+            if (m_DynamicBeamMaterial != null) Destroy(m_DynamicBeamMaterial);
+            if (m_BeamMesh != null) Destroy(m_BeamMesh);
         }
     }
 }

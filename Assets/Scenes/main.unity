@@ -342,12 +342,12 @@ MonoBehaviour:
   m_MaxShootDistance: 20
   m_AimAssistRadius: 0.5
   m_UseLightBeamVisual: 1
-  m_LightBeamWidthStart: 0.05
-  m_LightBeamWidthEnd: 1.2
+  m_LightBeamWidthStart: 0.01
+  m_LightBeamWidthEnd: 2
   m_LightBeamMaterial: {fileID: 0}
-  m_SpotLightIntensity: 8
-  m_SpotLightAngle: 25
-  m_LightReticlePrefab: {fileID: 0}
+  m_LightColor: {r: 1, g: 0.9, b: 0.6, a: 1}
+  m_BeamSegments: 16
+  m_SpotLightIntensity: 12
   m_ShootVibrationAmplitude: 0.3
   m_ShootVibrationDuration: 0.08
   m_HitVibrationAmplitude: 0.8
