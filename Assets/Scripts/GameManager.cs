@@ -1,0 +1,423 @@
+using System.Collections;
+using UnityEngine;
+using UnityEngine.InputSystem;
+using TMPro;
+
+namespace Unity.XR.XREAL.Samples
+{
+    /// <summary>
+    /// ゲーム全体の流れを管理するマネージャークラス。
+    /// ゲーム開始時にコントローラーまたはハンドトラッキングのキャリブレーション（開始待機）を要求し、
+    /// 完了後にゲームをアクティブにします。
+    /// </summary>
+    public class GameManager : MonoBehaviour
+    {
+        /// <summary>
+        /// GameManagerのシングルトンインスタンス
+        /// </summary>
+        public static GameManager Instance { get; private set; }
+
+
+
+        [Header("ゲーム状態")]
+        [SerializeField]
+        private GameState m_CurrentState = GameState.Calibration;
+
+        /// <summary>
+        /// 現在のゲームの進行状態
+        /// </summary>
+        public GameState CurrentState => m_CurrentState;
+
+        [Header("ゲームモード設定")]
+        [Tooltip("的がポップする候補位置のTransform配列")]
+        [SerializeField]
+        private Transform[] m_SpawnPoints;
+
+        [Tooltip("ゲームの制限時間（秒）")]
+        [SerializeField]
+        private float m_GameDuration = 30f;
+
+        [Tooltip("プレイヤーの最大ライフ（3回までOK、4回目でゲームオーバー）")]
+        [SerializeField]
+        private int m_MaxLife = 3;
+
+        [Tooltip("同時にフィールドに存在できる的の最大数")]
+        [SerializeField]
+        private int m_MaxActiveTargets = 3;
+
+        [Tooltip("的がポップする間隔（秒）")]
+        [SerializeField]
+        private float m_SpawnInterval = 1.5f;
+
+        [Header("UI設定")]
+        [Tooltip("画面中央等に案内テキストを表示するためのTextMeshProテキスト")]
+        [SerializeField]
+        private TMP_Text m_GuidanceText;
+
+        [Tooltip("Beam Proモードのキャリブレーション中に表示する案内メッセージ")]
+        [SerializeField]
+        [TextArea(2, 4)]
+        private string m_CalibrationMessage = "真正面にBeam Proを向けて、\n画面をタップしてください";
+
+        [Tooltip("キャリブレーション完了時に一時表示するメッセージ")]
+        [SerializeField]
+        private string m_StartMessage = "START!";
+
+        private XREALActions m_InputActions;
+        private TargetObject[] m_Targets;
+
+        // ゲーム進行管理用変数
+        private float m_TimeRemaining;
+        private int m_Score;
+        private int m_CurrentLife;
+        private float m_SpawnTimer;
+
+        private void Awake()
+        {
+            // シングルトンの初期化
+            if (Instance == null)
+            {
+                Instance = this;
+            }
+            else
+            {
+                Destroy(gameObject);
+                return;
+            }
+
+            // 自動生成された XREALActions のインスタンス化
+            m_InputActions = new XREALActions();
+        }
+
+        private void OnEnable()
+        {
+            if (m_InputActions != null)
+            {
+                m_InputActions.Enable();
+            }
+        }
+
+        private void OnDisable()
+        {
+            if (m_InputActions != null)
+            {
+                m_InputActions.Disable();
+            }
+        }
+
+        private void Start()
+        {
+            // 起動時に HMD を 6DoF モードに強制設定する
+            if (XREALPlugin.GetTrackingType() != TrackingType.MODE_6DOF)
+            {
+                Debug.Log("[XREAL] HMDのトラッキングを6DoFモードに切り替えます...");
+                _ = XREALPlugin.SwitchTrackingTypeAsync(TrackingType.MODE_6DOF, (result, targetMode) => {
+                    Debug.Log($"[XREAL] 6DoF切り替え結果: {result}, 現在のモード: {XREALPlugin.GetTrackingType()}");
+                });
+            }
+
+            // シーン内のすべての的（TargetObject）を取得・追跡（非アクティブなオブジェクトも含む）
+            m_Targets = Object.FindObjectsByType<TargetObject>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            Debug.Log($"[GameManager] {m_Targets.Length}個の的オブジェクトを検出しました。");
+            
+            // 初期状態はすべての的を非アクティブにしてプール化
+            foreach (var target in m_Targets)
+            {
+                target.gameObject.SetActive(false);
+            }
+
+            // 開始時に案内UIを表示し、メッセージを設定
+            m_GuidanceText.text = m_CalibrationMessage;
+            m_GuidanceText.gameObject.SetActive(true);
+
+            // PCデバッグ用に初期状態ではカーソルを表示
+            SetCursorState(false);
+        }
+
+        private void Update()
+        {
+            // キャリブレーション（開始待機）状態のときのみ、入力を監視して実行
+            if (m_CurrentState == GameState.Calibration)
+            {
+                if (IsTapDetected())
+                {
+                    PerformCalibration();
+                }
+            }
+            else if (m_CurrentState == GameState.Playing)
+            {
+                // 残り時間の減算
+                m_TimeRemaining -= Time.deltaTime;
+                if (m_TimeRemaining <= 0f)
+                {
+                    m_TimeRemaining = 0f;
+                    TriggerGameOver();
+                }
+
+                // スポーン処理のタイマー更新
+                m_SpawnTimer += Time.deltaTime;
+                if (m_SpawnTimer >= m_SpawnInterval)
+                {
+                    m_SpawnTimer = 0f;
+                    TrySpawnTarget();
+                }
+
+                // UIの更新
+                UpdatePlayingUI();
+            }
+            else if (m_CurrentState == GameState.GameOver)
+            {
+                // ゲームオーバー時の画面タップでキャリブレーションに戻る
+                if (IsTapDetected())
+                {
+                    ReturnToCalibration();
+                }
+            }
+        }
+
+        /// <summary>
+        /// プレイ中のUI表示（時間、スコア、ライフ）をリアルタイム更新します。
+        /// </summary>
+        private void UpdatePlayingUI()
+        {
+            m_GuidanceText.gameObject.SetActive(true);
+            m_GuidanceText.text = $"TIME: {m_TimeRemaining:0.0}s\nSCORE: {m_Score}\nLIFE: {m_CurrentLife}";
+        }
+
+        /// <summary>
+        /// 非アクティブな的をプールから選択し、ランダムな位置・移動パターンでポップさせます。
+        /// </summary>
+        private void TrySpawnTarget()
+        {
+            if (m_Targets == null || m_Targets.Length == 0) return;
+            if (m_SpawnPoints == null || m_SpawnPoints.Length == 0) return;
+
+            // 現在アクティブな的の数を数える
+            int activeCount = 0;
+            foreach (var target in m_Targets)
+            {
+                if (target.gameObject.activeInHierarchy)
+                {
+                    activeCount++;
+                }
+            }
+
+            // 同時存在数制限を超えている場合はスポーンしない
+            if (activeCount >= m_MaxActiveTargets) return;
+
+            // 非アクティブな的をランダムに探す
+            TargetObject spawnTarget = null;
+            int startIndex = Random.Range(0, m_Targets.Length);
+            for (int i = 0; i < m_Targets.Length; i++)
+            {
+                int index = (startIndex + i) % m_Targets.Length;
+                var target = m_Targets[index];
+                if (!target.gameObject.activeInHierarchy)
+                {
+                    spawnTarget = target;
+                    break;
+                }
+            }
+
+            // 空きの的があればポップ
+            if (spawnTarget != null)
+            {
+                Transform spawnPoint = m_SpawnPoints[Random.Range(0, m_SpawnPoints.Length)];
+                TargetMovementPattern pattern = (TargetMovementPattern)Random.Range(0, 3);
+
+                Debug.Log($"[GameManager] 的 {spawnTarget.name} をポップします。地点: {spawnPoint.name}, パターン: {pattern}");
+                spawnTarget.Spawn(spawnPoint.position, pattern);
+            }
+        }
+
+        /// <summary>
+        /// スコアを加算します（的オブジェクトの命中時に呼ばれます）。
+        /// </summary>
+        public void AddScore(int points)
+        {
+            if (m_CurrentState != GameState.Playing) return;
+            m_Score += points;
+            UpdatePlayingUI();
+        }
+
+        /// <summary>
+        /// 的がプレイヤーに到達したときに呼ばれ、ライフを減らします。
+        /// </summary>
+        public void OnTargetReachPlayer(TargetObject target)
+        {
+            if (m_CurrentState != GameState.Playing) return;
+
+            m_CurrentLife--;
+            Debug.Log($"[GameManager] 的がプレイヤーに到達しました。残りライフ: {m_CurrentLife}");
+
+            if (m_CurrentLife < 0)
+            {
+                TriggerGameOver();
+            }
+            else
+            {
+                UpdatePlayingUI();
+            }
+        }
+
+        /// <summary>
+        /// ゲームオーバー処理を行います。
+        /// </summary>
+        private void TriggerGameOver()
+        {
+            Debug.Log("[GameManager] ゲーム終了（ゲームオーバー）");
+            m_CurrentState = GameState.GameOver;
+
+            // PCデバッグ用にカーソルを表示・ロック解除
+            SetCursorState(false);
+
+            // すべての的を非アクティブにする
+            foreach (var target in m_Targets)
+            {
+                target.gameObject.SetActive(false);
+            }
+
+            // 最終結果を表示
+            m_GuidanceText.gameObject.SetActive(true);
+            m_GuidanceText.text = $"GAME OVER!\nFINAL SCORE: {m_Score}\n画面をタップして再挑戦";
+        }
+
+        /// <summary>
+        /// キャリブレーション（最初）の状態へ戻ります。
+        /// </summary>
+        private void ReturnToCalibration()
+        {
+            Debug.Log("[GameManager] キャリブレーション待ちへ戻ります。");
+            m_CurrentState = GameState.Calibration;
+
+            // PCデバッグ用にカーソルを表示・ロック解除
+            SetCursorState(false);
+
+            m_GuidanceText.text = m_CalibrationMessage;
+            m_GuidanceText.gameObject.SetActive(true);
+        }
+
+        /// <summary>
+        /// PCデバッグ中（エディタ実行時）のマウスカーソルの表示・ロック状態を制御します。
+        /// </summary>
+        private void SetCursorState(bool locked)
+        {
+            if (Application.isEditor)
+            {
+                if (locked)
+                {
+                    Cursor.lockState = CursorLockMode.Locked;
+                    Cursor.visible = false;
+                }
+                else
+                {
+                    Cursor.lockState = CursorLockMode.None;
+                    Cursor.visible = true;
+                }
+            }
+        }
+
+        /// <summary>
+        /// ゲームを初期状態（キャリブレーション待ち）に戻します（Appボタン等から手動で呼び出されます）。
+        /// </summary>
+        public void ResetGame()
+        {
+            Debug.Log("[GameManager] 手動によるゲームリセット要求を受信しました。");
+            
+            // すべての的を非アクティブにする
+            foreach (var target in m_Targets)
+            {
+                target.gameObject.SetActive(false);
+            }
+
+            ReturnToCalibration();
+        }
+
+        /// <summary>
+        /// 開始用のタップが行われたか判定します。
+        /// </summary>
+        private bool IsTapDetected()
+        {
+            // 1. XREALActions による Trigger 検知 (コントローラーのトリガー/画面タップに対応)
+            if (m_InputActions != null && m_InputActions.XREALButtons.Trigger.WasPressedThisFrame())
+            {
+                return true;
+            }
+
+            // 2. Pointer API（画面タップ / マウスクリック）による検知 (エディタテスト用)
+            if (Pointer.current != null && Pointer.current.press.wasPressedThisFrame)
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// キャリブレーション（または開始待機）を終了し、ゲームを開始します。
+        /// </summary>
+        private void PerformCalibration()
+        {
+            Debug.Log("[GameManager] キャリブレーション完了。ゲームを開始します。");
+
+            // コントローラーのリセンターを実行
+            XREALPlugin.RecenterController();
+
+            // インスペクターの設定値の安全チェック（シリアライズ破壊対策）
+            if (m_GameDuration <= 0f) m_GameDuration = 30f;
+            if (m_MaxLife <= 0) m_MaxLife = 3;
+            if (m_MaxActiveTargets <= 0) m_MaxActiveTargets = 3;
+            if (m_SpawnInterval <= 0f) m_SpawnInterval = 1.5f;
+
+            // ゲームパラメータの初期化
+            m_TimeRemaining = m_GameDuration;
+            m_Score = 0;
+            m_CurrentLife = m_MaxLife;
+            m_SpawnTimer = 0f;
+
+            // 的プールを初期状態に戻す
+            foreach (var target in m_Targets)
+            {
+                target.ResetTarget();
+                target.gameObject.SetActive(false);
+            }
+
+            // 状態をゲームプレイ中に移行
+            m_CurrentState = GameState.Playing;
+
+            // PCデバッグ用にカーソルを非表示・ロック
+            SetCursorState(true);
+
+            // 開始演出コール
+            StartCoroutine(ShowStartMessageRoutine());
+        }
+
+        private IEnumerator ShowStartMessageRoutine()
+        {
+            m_GuidanceText.text = m_StartMessage;
+            yield return new WaitForSeconds(1.0f);
+            m_GuidanceText.gameObject.SetActive(false);
+        }
+
+        private void OnDestroy()
+        {
+            if (m_InputActions != null)
+            {
+                m_InputActions.Dispose();
+            }
+        }
+    }
+
+    /// <summary>
+    /// ゲームの進行状態を示す列挙型
+    /// </summary>
+    public enum GameState
+    {
+        /// <summary> キャリブレーション中（開始待ち） </summary>
+        Calibration,
+        /// <summary> ゲームプレイ中 </summary>
+        Playing,
+        /// <summary> ゲーム終了 </summary>
+        GameOver
+    }
+}

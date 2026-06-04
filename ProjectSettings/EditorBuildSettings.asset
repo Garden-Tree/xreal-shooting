@@ -12,7 +12,7 @@ EditorBuildSettings:
     path: Assets/Samples/XREAL XR Plugin/3.1.0/Interaction Basics/HelloMR/HelloMR.unity
     guid: 0c611a2881614c644b9df39be7bf8fe6
   m_configObjects:
-    com.unity.input.settings.actions: {fileID: -944628639613478452, guid: 052faaac586de48259a63d0c4782560b, type: 3}
+    com.unity.input.settings.actions: {fileID: -944628639613478452, guid: b8662e8a436564e1c944d8686a8c64e8, type: 3}
     com.unity.xr.arfoundation.simulation_settings: {fileID: 11400000, guid: da93d785c514448d7a5d350e433d2107, type: 2}
     com.unity.xr.management.loader_settings: {fileID: 11400000, guid: cc39b4d1efdd14cc791ce311ba096d93, type: 2}
     com.unity.xr.management.xrealsettings: {fileID: 11400000, guid: 379a4693d6986415c9df7284d6297aea, type: 2}

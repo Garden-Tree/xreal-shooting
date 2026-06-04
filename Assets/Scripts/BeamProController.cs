@@ -34,12 +34,7 @@ namespace Unity.XR.XREAL.Samples
         [SerializeField]
         private float m_AimAssistRadius = 0.5f;
 
-        [Header("入力アクション設定")]
-        [Tooltip("射撃ボタン（トリガー）の入力アクション")]
-        [SerializeField]
-        private InputActionProperty m_TriggerAction;
-
-        private InputAction m_DynamicTriggerAction;
+        private XREALActions m_XREALActions;
 
         [Header("フラッシュライト可視化設定")]
         [Tooltip("ライトコーン（光線）の描画に LineRenderer を使用するかどうか")]
@@ -102,28 +97,11 @@ namespace Unity.XR.XREAL.Samples
 
         private void Awake()
         {
-            // オーディオソースの自動設定
-            if (m_AudioSource == null)
-            {
-                m_AudioSource = GetComponent<AudioSource>();
-                if (m_AudioSource == null)
-                {
-                    m_AudioSource = gameObject.AddComponent<AudioSource>();
-                }
-            }
+            if (m_AudioSource == null) m_AudioSource = gameObject.AddComponent<AudioSource>();
         }
 
         private IEnumerator Start()
         {
-            // 起動時に HMD を 6DoF モードに強制設定する
-            if (XREALPlugin.GetTrackingType() != TrackingType.MODE_6DOF)
-            {
-                Debug.Log("[XREAL] HMDのトラッキングを6DoFモードに切り替えます...");
-                _ = XREALPlugin.SwitchTrackingTypeAsync(TrackingType.MODE_6DOF, (result, targetMode) => {
-                    Debug.Log($"[XREAL] 6DoF切り替え結果: {result}, 現在のモード: {XREALPlugin.GetTrackingType()}");
-                });
-            }
-
             // ポインターTransformが未設定の場合、XREAL SDKの標準的なコントローラー階層から探索
             if (m_PointerTransform == null)
             {
@@ -146,42 +124,27 @@ namespace Unity.XR.XREAL.Samples
                         {
                             m_PointerTransform = controller.transform;
                         }
+                        Debug.Log($"[{name}] ポインター起点となるTransformを自動検出して設定しました: {m_PointerTransform.name}");
                     }
                 }
-            }
-
-            // それでも見つからない場合は、アタッチ先自身を起点とする
-            if (m_PointerTransform == null)
-            {
-                m_PointerTransform = transform;
-                Debug.LogWarning($"[{name}] ポインター起点となるTransformが自動検出されなかったため、自身({name})のTransformを起点として設定しました。");
             }
 
             // フラッシュライト関連のビジュアル初期化
             InitializeFlashlightVisuals();
 
-            // InputActionの有効化
-            if (m_TriggerAction.action != null)
-            {
-                m_TriggerAction.action.Enable();
-            }
-            else
-            {
-                // インスペクターで設定されていない場合、XREAL Actions.inputactions で定義されている
-                // バインディング名（<XREALController>/TriggerButton, <XRSimulatedController>/triggerButton）を動的に登録
-                m_DynamicTriggerAction = new InputAction("XREALTrigger", binding: "<XREALController>/TriggerButton");
-                m_DynamicTriggerAction.AddBinding("<XRSimulatedController>/triggerButton");
-                m_DynamicTriggerAction.Enable();
-            }
+            // 自動生成された XREALActions クラスをインスタンス化して有効化
+            m_XREALActions = new XREALActions();
+            m_XREALActions.Enable();
         }
 
         private void OnDisable()
         {
-            if (m_DynamicTriggerAction != null)
+            // 自動生成されたインプットアクションクラスの無効化と破棄
+            if (m_XREALActions != null)
             {
-                m_DynamicTriggerAction.Disable();
-                m_DynamicTriggerAction.Dispose();
-                m_DynamicTriggerAction = null;
+                m_XREALActions.Disable();
+                m_XREALActions.Dispose();
+                m_XREALActions = null;
             }
         }
 
@@ -196,6 +159,12 @@ namespace Unity.XR.XREAL.Samples
             if (IsTriggerPressedThisFrame())
             {
                 Shoot();
+            }
+
+            // 3. Appボタン入力による手動キャリブレーション（リセット）の実行
+            if (m_XREALActions.XREALButtons.App.WasPressedThisFrame())
+            {
+                GameManager.Instance?.ResetGame();
             }
         }
 
@@ -214,34 +183,27 @@ namespace Unity.XR.XREAL.Samples
             if (didHit)
             {
                 targetDistance = hit.distance;
-                TargetObject target = hit.collider.GetComponent<TargetObject>();
-                if (target != null)
+                if (hit.collider.TryGetComponent<TargetObject>(out var target))
                 {
                     target.SetLit();
                 }
 
                 // 照射位置にレティクル（光の輪）を投影
-                if (m_ReticleInstance != null)
-                {
-                    m_ReticleInstance.SetActive(true);
-                    m_ReticleInstance.transform.position = hit.point + hit.normal * 0.02f; // 壁にめり込まないように少し浮かせる
-                    m_ReticleInstance.transform.rotation = Quaternion.LookRotation(-hit.normal); // 面の法線方向に向ける
-                    
-                    // 距離に応じたサイズスケーリング（円錐光の広がりをシミュレート）
-                    float scale = Mathf.Lerp(m_LightBeamWidthStart, m_LightBeamWidthEnd, hit.distance / m_MaxDiscoveryDistance);
-                    m_ReticleInstance.transform.localScale = Vector3.one * scale;
-                }
+                m_ReticleInstance.SetActive(true);
+                m_ReticleInstance.transform.position = hit.point + hit.normal * 0.02f; // 壁にめり込まないように少し浮かせる
+                m_ReticleInstance.transform.rotation = Quaternion.LookRotation(-hit.normal); // 面の法線方向に向ける
+                
+                // 距離に応じたサイズスケーリング（円錐光の広がりをシミュレート）
+                float scale = Mathf.Lerp(m_LightBeamWidthStart, m_LightBeamWidthEnd, hit.distance / m_MaxDiscoveryDistance);
+                m_ReticleInstance.transform.localScale = Vector3.one * scale;
             }
             else
             {
-                if (m_ReticleInstance != null)
-                {
-                    m_ReticleInstance.SetActive(false);
-                }
+                m_ReticleInstance.SetActive(false);
             }
 
             // LineRendererでライトビーム（光線）を描画
-            if (m_UseLightBeamVisual && m_LineRenderer != null)
+            if (m_UseLightBeamVisual)
             {
                 m_LineRenderer.SetPosition(0, m_PointerTransform.position);
                 m_LineRenderer.SetPosition(1, m_PointerTransform.position + m_PointerTransform.forward * targetDistance);
@@ -264,10 +226,7 @@ namespace Unity.XR.XREAL.Samples
             TriggerHaptic(m_ShootVibrationAmplitude, m_ShootVibrationDuration);
 
             // 2. 射撃音の再生
-            if (m_AudioSource != null && m_ShootSound != null)
-            {
-                m_AudioSource.PlayOneShot(m_ShootSound);
-            }
+            if (m_ShootSound != null) m_AudioSource.PlayOneShot(m_ShootSound);
 
             // 3. エイムアシスト機能 (SphereCast)
             Ray ray = new Ray(m_PointerTransform.position, m_PointerTransform.forward);
@@ -276,8 +235,7 @@ namespace Unity.XR.XREAL.Samples
             // 太いレーザー（SphereCast）を飛ばして手ブレを補正
             if (Physics.SphereCast(ray, m_AimAssistRadius, out hit, m_MaxShootDistance, m_TargetLayerMask))
             {
-                TargetObject target = hit.collider.GetComponent<TargetObject>();
-                if (target != null)
+                if (hit.collider.TryGetComponent<TargetObject>(out var target))
                 {
                     // ターゲットのヒット時演出と自己破棄を実行
                     target.OnHit();
@@ -293,30 +251,11 @@ namespace Unity.XR.XREAL.Samples
         /// </summary>
         private bool IsTriggerPressedThisFrame()
         {
-            // (A) インスペクターから割り当てられた InputActionProperty による検知
-            if (m_TriggerAction.action != null && m_TriggerAction.action.WasPressedThisFrame())
-            {
-                return true;
-            }
-
-            // (A-2) 動的に生成された InputSystem アクションによる検知
-            if (m_DynamicTriggerAction != null && m_DynamicTriggerAction.WasPressedThisFrame())
-            {
-                return true;
-            }
+            // (A) 自動生成された XREALActions クラスによる Trigger 検知
+            if (m_XREALActions.XREALButtons.Trigger.WasPressedThisFrame()) return true;
 
             // (B) 既存の XREALInput が有効な場合のフォールバック（LegacyTools対応）
-            try
-            {
-                if (XREALInput.GetButtonDown(ControllerButton.TRIGGER))
-                {
-                    return true;
-                }
-            }
-            catch
-            {
-                // XREALInputが存在しない、または例外発生時はスキップ
-            }
+            if (XREALInput.GetButtonDown(ControllerButton.TRIGGER)) return true;
 
             // (C) エディタ内テストおよび画面タッチ用のマウスボタン・タップ検知
             if (Pointer.current != null && Pointer.current.press.wasPressedThisFrame)
@@ -334,22 +273,13 @@ namespace Unity.XR.XREAL.Samples
         /// <param name="duration">持続時間（秒）</param>
         private void TriggerHaptic(float amplitude, float duration)
         {
-            // HelloMR サンプルと同様に XREALVirtualController.Singleton から呼び出し
-            if (XREALVirtualController.Singleton != null && XREALVirtualController.Singleton.Controller != null)
+            if (XREALVirtualController.Singleton?.Controller != null)
             {
                 XREALVirtualController.Singleton.Controller.SendHapticImpulse(0, amplitude, duration);
             }
             else
             {
-                // フォールバック: XREALInputのハプティクス呼び出し
-                try
-                {
-                    XREALInput.TriggerHapticVibration(duration, amplitude);
-                }
-                catch
-                {
-                    // SDKが動作していない（エディタ再生時など）はスキップ
-                }
+                XREALInput.TriggerHapticVibration(duration, amplitude);
             }
         }
 
@@ -384,8 +314,7 @@ namespace Unity.XR.XREAL.Samples
             if (m_PointerTransform == null) return;
 
             // 1. スポットライトコンポーネントの追加・設定
-            m_SpotLight = m_PointerTransform.GetComponent<Light>();
-            if (m_SpotLight == null)
+            if (!m_PointerTransform.TryGetComponent(out m_SpotLight))
             {
                 m_SpotLight = m_PointerTransform.gameObject.AddComponent<Light>();
             }
@@ -398,8 +327,7 @@ namespace Unity.XR.XREAL.Samples
             // 2. LineRenderer（ライトビーム）の追加・設定
             if (m_UseLightBeamVisual)
             {
-                m_LineRenderer = m_PointerTransform.GetComponent<LineRenderer>();
-                if (m_LineRenderer == null)
+                if (!m_PointerTransform.TryGetComponent(out m_LineRenderer))
                 {
                     m_LineRenderer = m_PointerTransform.gameObject.AddComponent<LineRenderer>();
                 }
@@ -407,20 +335,12 @@ namespace Unity.XR.XREAL.Samples
                 
                 if (m_LightBeamMaterial == null)
                 {
-                    Shader shader = Shader.Find("Sprites/Default");
-                    if (shader != null)
-                    {
-                        m_DynamicBeamMaterial = new Material(shader);
-                        // 半透明の薄い黄色
-                        m_DynamicBeamMaterial.color = new Color(1f, 0.9f, 0.5f, 0.12f);
-                        m_LightBeamMaterial = m_DynamicBeamMaterial;
-                    }
+                    m_DynamicBeamMaterial = new Material(Shader.Find("Sprites/Default"));
+                    m_DynamicBeamMaterial.color = new Color(1f, 0.9f, 0.5f, 0.12f);
+                    m_LightBeamMaterial = m_DynamicBeamMaterial;
                 }
                 
-                if (m_LightBeamMaterial != null)
-                {
-                    m_LineRenderer.material = m_LightBeamMaterial;
-                }
+                m_LineRenderer.material = m_LightBeamMaterial;
                 m_LineRenderer.startWidth = m_LightBeamWidthStart;
                 m_LineRenderer.endWidth = m_LightBeamWidthEnd;
 
@@ -444,21 +364,13 @@ namespace Unity.XR.XREAL.Samples
                 m_ReticleInstance = GameObject.CreatePrimitive(PrimitiveType.Quad);
                 m_ReticleInstance.name = "FlashlightReticle";
                 
-                Collider col = m_ReticleInstance.GetComponent<Collider>();
-                if (col != null) Destroy(col);
+                Destroy(m_ReticleInstance.GetComponent<Collider>());
                 
                 Renderer rend = m_ReticleInstance.GetComponent<Renderer>();
-                if (rend != null)
-                {
-                    Shader shader = Shader.Find("Sprites/Default");
-                    if (shader != null)
-                    {
-                        m_DynamicReticleMaterial = new Material(shader);
-                        // レティクルカラー（光の輪）
-                        m_DynamicReticleMaterial.color = new Color(1f, 0.95f, 0.6f, 0.3f);
-                        rend.material = m_DynamicReticleMaterial;
-                    }
-                }
+                m_DynamicReticleMaterial = new Material(Shader.Find("Sprites/Default"));
+                m_DynamicReticleMaterial.color = new Color(1f, 0.95f, 0.6f, 0.3f);
+                rend.material = m_DynamicReticleMaterial;
+
                 m_ReticleInstance.transform.localScale = Vector3.one * m_LightBeamWidthEnd;
             }
             m_ReticleInstance.SetActive(false);
