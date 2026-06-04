@@ -57,6 +57,34 @@ namespace Unity.XR.XREAL.Samples
         [SerializeField]
         private float m_SpawnInterval = 1.5f;
 
+        [Header("オーディオ設定")]
+        [Tooltip("ダメージを受けたときのSE")]
+        [SerializeField]
+        private AudioClip m_DamageSound;
+
+        private AudioSource m_AudioSource;
+
+        [Header("BGM設定")]
+        [Tooltip("BGM再生用のAudioSource")]
+        [SerializeField]
+        private AudioSource m_BGMSource;
+
+        [Tooltip("BGMのオーディオクリップ")]
+        [SerializeField]
+        private AudioClip m_BGMClip;
+
+        [Tooltip("特定の秒数間でループさせるか")]
+        [SerializeField]
+        private bool m_UseCustomLoop = false;
+
+        [Tooltip("ループ開始秒数")]
+        [SerializeField]
+        private float m_LoopStartTime = 0f;
+
+        [Tooltip("ループ終了秒数")]
+        [SerializeField]
+        private float m_LoopEndTime = 100f;
+
         [Header("UI設定")]
         [Tooltip("画面中央等に案内テキストを表示するためのTextMeshProテキスト")]
         [SerializeField]
@@ -95,6 +123,13 @@ namespace Unity.XR.XREAL.Samples
 
             // 自動生成された XREALActions のインスタンス化
             m_InputActions = new XREALActions();
+
+            // オーディオソースの取得または追加
+            m_AudioSource = GetComponent<AudioSource>();
+            if (m_AudioSource == null)
+            {
+                m_AudioSource = gameObject.AddComponent<AudioSource>();
+            }
         }
 
         private void OnEnable()
@@ -146,12 +181,34 @@ namespace Unity.XR.XREAL.Samples
             m_GuidanceText.text = m_CalibrationMessage;
             m_GuidanceText.gameObject.SetActive(true);
 
+            // BGMの再生開始
+            StartBGM();
+
             // PCデバッグ用に初期状態ではカーソルを表示
             SetCursorState(false);
         }
 
+        private void StartBGM()
+        {
+            if (m_BGMSource == null)
+            {
+                m_BGMSource = gameObject.AddComponent<AudioSource>();
+            }
+
+            if (m_BGMClip != null)
+            {
+                m_BGMSource.clip = m_BGMClip;
+                m_BGMSource.loop = true; // デフォルトでループさせる
+                m_BGMSource.volume = 0.5f; // 適当な初期音量
+                m_BGMSource.Play();
+            }
+        }
+
         private void Update()
         {
+            // BGMのカスタムループ処理
+            UpdateBGMLoop();
+
             // キャリブレーション（開始待機）状態のときのみ、入力を監視して実行
             if (m_CurrentState == GameState.Calibration)
             {
@@ -188,6 +245,25 @@ namespace Unity.XR.XREAL.Samples
                 {
                     ReturnToCalibration();
                 }
+            }
+        }
+
+        /// <summary>
+        /// BGMの任意区間ループ処理を更新します。
+        /// </summary>
+        private void UpdateBGMLoop()
+        {
+            if (!m_UseCustomLoop || m_BGMSource == null || m_BGMSource.clip == null || !m_BGMSource.isPlaying) return;
+
+            // 終了時間に到達した場合は開始時間に戻す
+            if (m_BGMSource.time >= m_LoopEndTime)
+            {
+                m_BGMSource.time -= (m_LoopEndTime - m_LoopStartTime);
+            }
+            // 標準のループで勝手に先頭(0秒)に戻ってしまった場合の対策
+            else if (m_BGMSource.time < m_LoopStartTime && m_BGMSource.time < 0.2f)
+            {
+                m_BGMSource.time = m_LoopStartTime;
             }
         }
 
@@ -253,6 +329,10 @@ namespace Unity.XR.XREAL.Samples
         {
             if (m_CurrentState != GameState.Playing) return;
             m_Score += points;
+            
+            // スコアがマイナスにならないように0で下限を設ける
+            if (m_Score < 0) m_Score = 0;
+            
             UpdatePlayingUI();
         }
 
@@ -265,6 +345,15 @@ namespace Unity.XR.XREAL.Samples
 
             m_CurrentLife--;
             Debug.Log($"[GameManager] 的がプレイヤーに到達しました。残りライフ: {m_CurrentLife}");
+
+            // 被弾ペナルティ（-100点）
+            AddScore(-100);
+
+            // ダメージSEの再生
+            if (m_DamageSound != null && m_AudioSource != null)
+            {
+                m_AudioSource.PlayOneShot(m_DamageSound);
+            }
 
             if (m_CurrentLife < 0)
             {

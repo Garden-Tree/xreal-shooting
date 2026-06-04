@@ -2,6 +2,7 @@ using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.UI;
 
 namespace Unity.XR.XREAL.Samples
 {
@@ -34,6 +35,12 @@ namespace Unity.XR.XREAL.Samples
         [Tooltip("エイムアシストの太さ（SphereCastの半径）。値が大きいほど当たりやすくなります。")]
         [SerializeField]
         private float m_AimAssistRadius = 0.5f;
+
+        [Tooltip("射撃のクールタイム（秒）")]
+        [SerializeField]
+        private float m_ShootCooldown = 0.5f;
+
+        private float m_LastShootTime = -100f;
 
         private XREALActions m_XREALActions;
 
@@ -101,6 +108,15 @@ namespace Unity.XR.XREAL.Samples
         [SerializeField]
         private AudioClip m_ShootSound;
 
+        [Tooltip("クールタイム中に発射しようとしたときのエラーSE")]
+        [SerializeField]
+        private AudioClip m_CannotShootSound;
+
+        [Header("UI設定")]
+        [Tooltip("クールタイムを表示する円形ゲージのImage（Image TypeをFilledに設定してください）")]
+        [SerializeField]
+        private Image m_CooldownGaugeImage;
+
         private void Awake()
         {
             if (m_AudioSource == null) m_AudioSource = gameObject.AddComponent<AudioSource>();
@@ -160,15 +176,41 @@ namespace Unity.XR.XREAL.Samples
             PerformFlashlightDiscovery();
 
             // 2. 射撃判定: 画面タップ（トリガー入力）の検知
-            if (IsTriggerPressedThisFrame())
+            // ゲームプレイ中のみ射撃を許可する
+            if (GameManager.Instance != null && GameManager.Instance.CurrentState == GameState.Playing)
             {
-                Shoot();
+                if (IsTriggerPressedThisFrame())
+                {
+                    TryShoot();
+                }
             }
 
             // 3. Appボタン入力による手動キャリブレーション（リセット）の実行
             if (m_XREALActions.XREALButtons.App.WasPressedThisFrame())
             {
                 GameManager.Instance?.ResetGame();
+            }
+
+            // 4. UIゲージの更新
+            UpdateCooldownUI();
+        }
+
+        private void UpdateCooldownUI()
+        {
+            if (m_CooldownGaugeImage != null)
+            {
+                float timeSinceLastShoot = Time.time - m_LastShootTime;
+                if (timeSinceLastShoot < m_ShootCooldown)
+                {
+                    // クールタイム中：ゲージを表示して 0.0 〜 1.0 の間で増やす
+                    if (!m_CooldownGaugeImage.enabled) m_CooldownGaugeImage.enabled = true;
+                    m_CooldownGaugeImage.fillAmount = timeSinceLastShoot / m_ShootCooldown;
+                }
+                else
+                {
+                    // クールタイム完了（フルチャージ）：ゲージを非表示にする
+                    if (m_CooldownGaugeImage.enabled) m_CooldownGaugeImage.enabled = false;
+                }
             }
         }
 
@@ -227,6 +269,20 @@ namespace Unity.XR.XREAL.Samples
             m_BeamMesh.RecalculateBounds();
         }
 
+        private void TryShoot()
+        {
+            if (Time.time - m_LastShootTime < m_ShootCooldown)
+            {
+                // クールタイム中
+                if (m_CannotShootSound != null) m_AudioSource.PlayOneShot(m_CannotShootSound);
+                return;
+            }
+
+            // 射撃可能
+            m_LastShootTime = Time.time;
+            Shoot();
+        }
+
         private void Shoot()
         {
             TriggerHaptic(m_ShootVibrationAmplitude, m_ShootVibrationDuration);
@@ -235,6 +291,8 @@ namespace Unity.XR.XREAL.Samples
 
             Ray ray = new Ray(m_PointerTransform.position, m_PointerTransform.forward);
             RaycastHit hit;
+            
+            bool isHit = false;
 
             if (Physics.SphereCast(ray, m_AimAssistRadius, out hit, m_MaxShootDistance, m_TargetLayerMask))
             {
@@ -242,7 +300,14 @@ namespace Unity.XR.XREAL.Samples
                 {
                     target.OnHit();
                     TriggerHaptic(m_HitVibrationAmplitude, m_HitVibrationDuration);
+                    isHit = true;
                 }
+            }
+
+            // どこにも当たらなかった場合はスコアを-10
+            if (!isHit)
+            {
+                GameManager.Instance?.AddScore(-10);
             }
         }
 
