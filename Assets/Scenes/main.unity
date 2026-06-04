@@ -20015,7 +20015,7 @@ MonoBehaviour:
   - {fileID: 1866348135}
   - {fileID: 780422152}
   - {fileID: 2045513035}
-  m_GameDuration: 10
+  m_GameDuration: 60
   m_MaxLife: 3
   m_MaxActiveTargets: 8
   m_SpawnInterval: 1
@@ -25077,7 +25077,7 @@ MonoBehaviour:
     m_Bits: 128
   m_MaxDiscoveryDistance: 15
   m_MaxShootDistance: 20
-  m_AimAssistRadius: 0.5
+  m_AimAssistRadius: 0.2
   m_ShootCooldown: 0.5
   m_UseLightBeamVisual: 1
   m_LightBeamWidthStart: 0.01
@@ -35027,11 +35027,6 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: cf7bcd98e5f5845aaa1e4c8d9eb5224b, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  m_TargetCamera: {fileID: 0}
-  m_Distance: 2
-  m_FollowSpeed: 5
-  m_RotationSpeed: 5
-  m_LockPitch: 0
 --- !u!114 &1399770623
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -35048,7 +35043,7 @@ MonoBehaviour:
   m_TargetOffset: {x: 0, y: 0, z: 100}
   m_FollowInLocalSpace: 0
   m_ApplyTargetInLocalSpace: 0
-  m_MovementSpeed: 18
+  m_MovementSpeed: 24
   m_MovementSpeedVariancePercentage: 0.25
   m_SnapOnEnable: 1
   m_PositionFollowMode: 1

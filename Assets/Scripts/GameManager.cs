@@ -187,6 +187,7 @@ namespace Unity.XR.XREAL.Samples
                     Debug.Log($"[XREAL] 6DoF切り替え結果: {result}, 現在のモード: {XREALPlugin.GetTrackingType()}");
                 });
             }
+            Debug.Log("現在のトラッキングモード: " + XREALPlugin.GetTrackingType());
 
             // プレハブから的をインスタンス化してプールを構築
             if (m_TargetPrefab != null)
