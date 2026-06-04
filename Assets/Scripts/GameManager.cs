@@ -1,6 +1,7 @@
 using System.Collections;
 using UnityEngine;
 using UnityEngine.InputSystem;
+using UnityEngine.UI;
 using TMPro;
 
 namespace Unity.XR.XREAL.Samples
@@ -62,6 +63,10 @@ namespace Unity.XR.XREAL.Samples
         [SerializeField]
         private AudioClip m_DamageSound;
 
+        [Tooltip("クリア時に順番に再生するSEの配列（例: クラッカー音 → ファンファーレ等）")]
+        [SerializeField]
+        private AudioClip[] m_ClearSounds;
+
         private AudioSource m_AudioSource;
 
         [Header("BGM設定")]
@@ -85,10 +90,34 @@ namespace Unity.XR.XREAL.Samples
         [SerializeField]
         private float m_LoopEndTime = 100f;
 
+        [Header("ゲーム進行設定")]
+        [Tooltip("ゲームオーバー後、タップに反応しないクールタイム（秒）")]
+        [SerializeField]
+        private float m_GameOverCooldown = 2.0f;
+
+        private float m_GameOverTime = -100f;
+
+        [Header("エフェクト設定")]
+        [Tooltip("ゲームクリア時に再生する紙吹雪パーティクル")]
+        [SerializeField]
+        private ParticleSystem m_ConfettiEffect;
+
         [Header("UI設定")]
         [Tooltip("画面中央等に案内テキストを表示するためのTextMeshProテキスト")]
         [SerializeField]
         private TMP_Text m_GuidanceText;
+
+        [Tooltip("スコア表示用の専用TextMeshProテキスト（ゼロ埋め表示）")]
+        [SerializeField]
+        private TMP_Text m_ScoreText;
+
+        [Tooltip("残り時間表示用の専用TextMeshProテキスト（ss.SSS形式）")]
+        [SerializeField]
+        private TMP_Text m_TimerText;
+
+        [Tooltip("残り時間を表示するゲージ（Image: Filled指定）")]
+        [SerializeField]
+        private Image m_TimerGauge;
 
         [Tooltip("Beam Proモードのキャリブレーション中に表示する案内メッセージ")]
         [SerializeField]
@@ -224,7 +253,9 @@ namespace Unity.XR.XREAL.Samples
                 if (m_TimeRemaining <= 0f)
                 {
                     m_TimeRemaining = 0f;
-                    TriggerGameOver();
+                    UpdatePlayingUI(); // 最後に0秒になったUIを反映させておく
+                    TriggerGameOver(true); // 時間切れはクリア扱い
+                    return; // UIを上書きしないようにここで処理を抜ける
                 }
 
                 // スポーン処理のタイマー更新
@@ -240,10 +271,14 @@ namespace Unity.XR.XREAL.Samples
             }
             else if (m_CurrentState == GameState.GameOver)
             {
-                // ゲームオーバー時の画面タップでキャリブレーションに戻る
-                if (IsTapDetected())
+                // ゲームオーバー直後はタップを無視する（数秒間）
+                if (Time.time - m_GameOverTime >= m_GameOverCooldown)
                 {
-                    ReturnToCalibration();
+                    // ゲームオーバー時の画面タップでキャリブレーションに戻る
+                    if (IsTapDetected())
+                    {
+                        ReturnToCalibration();
+                    }
                 }
             }
         }
@@ -272,8 +307,27 @@ namespace Unity.XR.XREAL.Samples
         /// </summary>
         private void UpdatePlayingUI()
         {
+            // インストラクションテキストからは時間とスコアを外し、ライフのみ表示する
             m_GuidanceText.gameObject.SetActive(true);
-            m_GuidanceText.text = $"TIME: {m_TimeRemaining:0.0}s\nSCORE: {m_Score}\nLIFE: {m_CurrentLife}";
+            m_GuidanceText.text = $"LIFE: {m_CurrentLife}";
+
+            // 専用UIの更新
+            if (m_ScoreText != null)
+            {
+                m_ScoreText.text = $"SCORE: {m_Score:00000}";
+            }
+
+            if (m_TimerText != null)
+            {
+                // 00.000形式で表示 (ss.SSS)
+                m_TimerText.text = m_TimeRemaining.ToString("00.000");
+            }
+
+            if (m_TimerGauge != null)
+            {
+                // 最大時間に対する残り時間の割合でゲージを更新
+                m_TimerGauge.fillAmount = Mathf.Clamp01(m_TimeRemaining / m_GameDuration);
+            }
         }
 
         /// <summary>
@@ -357,7 +411,7 @@ namespace Unity.XR.XREAL.Samples
 
             if (m_CurrentLife < 0)
             {
-                TriggerGameOver();
+                TriggerGameOver(false); // ライフ0はゲームオーバー扱い
             }
             else
             {
@@ -366,12 +420,14 @@ namespace Unity.XR.XREAL.Samples
         }
 
         /// <summary>
-        /// ゲームオーバー処理を行います。
+        /// ゲーム終了処理を行います。
         /// </summary>
-        private void TriggerGameOver()
+        /// <param name="isClear">時間切れでクリアした場合はtrue</param>
+        private void TriggerGameOver(bool isClear)
         {
-            Debug.Log("[GameManager] ゲーム終了（ゲームオーバー）");
+            Debug.Log($"[GameManager] ゲーム終了（クリア: {isClear}）");
             m_CurrentState = GameState.GameOver;
+            m_GameOverTime = Time.time;
 
             // PCデバッグ用にカーソルを表示・ロック解除
             SetCursorState(false);
@@ -384,7 +440,63 @@ namespace Unity.XR.XREAL.Samples
 
             // 最終結果を表示
             m_GuidanceText.gameObject.SetActive(true);
-            m_GuidanceText.text = $"GAME OVER!\nFINAL SCORE: {m_Score}\n画面をタップして再挑戦";
+            
+            if (isClear)
+            {
+                m_GuidanceText.text = $"GAME CLEAR!!\nFINAL SCORE: {m_Score}\n画面をタップして再挑戦";
+                if (m_ConfettiEffect != null)
+                {
+                    m_ConfettiEffect.Play();
+                }
+
+                // クリア音を順番に再生
+                StartCoroutine(PlayClearSoundsRoutine());
+                
+                // 虹色グラデーションアニメーションを開始
+                StartCoroutine(RainbowTextRoutine());
+            }
+            else
+            {
+                m_GuidanceText.text = $"GAME OVER!\nFINAL SCORE: {m_Score}\n画面をタップして再挑戦";
+            }
+        }
+
+        private IEnumerator PlayClearSoundsRoutine()
+        {
+            if (m_ClearSounds == null || m_AudioSource == null) yield break;
+
+            foreach (var clip in m_ClearSounds)
+            {
+                if (clip != null)
+                {
+                    m_AudioSource.PlayOneShot(clip);
+                    yield return new WaitForSeconds(clip.length);
+                }
+            }
+        }
+
+        private IEnumerator RainbowTextRoutine()
+        {
+            // グラデーションを有効化
+            m_GuidanceText.enableVertexGradient = true;
+
+            while (m_CurrentState == GameState.GameOver)
+            {
+                // 時間の経過に合わせて色相（Hue）を少しずらして4頂点の色を生成
+                float t = Time.time * 0.8f; 
+                Color topLeft = Color.HSVToRGB(Mathf.Repeat(t, 1f), 0.8f, 1f);
+                Color topRight = Color.HSVToRGB(Mathf.Repeat(t + 0.2f, 1f), 0.8f, 1f);
+                Color bottomLeft = Color.HSVToRGB(Mathf.Repeat(t + 0.4f, 1f), 0.8f, 1f);
+                Color bottomRight = Color.HSVToRGB(Mathf.Repeat(t + 0.6f, 1f), 0.8f, 1f);
+
+                m_GuidanceText.colorGradient = new VertexGradient(topLeft, topRight, bottomLeft, bottomRight);
+
+                yield return null; // 毎フレーム更新
+            }
+
+            // 状態が変わったらグラデーションを無効化して白に戻す
+            m_GuidanceText.enableVertexGradient = false;
+            m_GuidanceText.color = Color.white;
         }
 
         /// <summary>
@@ -394,6 +506,12 @@ namespace Unity.XR.XREAL.Samples
         {
             Debug.Log("[GameManager] キャリブレーション待ちへ戻ります。");
             m_CurrentState = GameState.Calibration;
+
+            // 紙吹雪を即座に停止し、画面に残っているものもすべて消去する
+            if (m_ConfettiEffect != null)
+            {
+                m_ConfettiEffect.Stop(true, ParticleSystemStopBehavior.StopEmittingAndClear);
+            }
 
             // PCデバッグ用にカーソルを表示・ロック解除
             SetCursorState(false);
