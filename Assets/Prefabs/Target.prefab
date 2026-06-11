@@ -123,10 +123,10 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: 
   m_TargetRenderer: {fileID: 0}
-  m_EmissionColor: {r: 0, g: 1, b: 0, a: 1}
   m_HitEffect: {fileID: 2644997205079319775, guid: 5fd1357c361f4474da37c956df27e39f, type: 3}
   m_AudioSource: {fileID: 1616688932335625258}
-  m_HitSound: {fileID: 8300000, guid: 1c4d5fefeb45e41eab07f332586de00a, type: 3}
+  m_HitSound: {fileID: 8300000, guid: 5593d8570b9bf4146ad03f87c9f4f78e, type: 3}
+  m_MovementSound: {fileID: 8300000, guid: 8829e626c166d4f33a0a764fb1a8e998, type: 3}
   m_DestroyDelay: 2
   m_MoveSpeed: 1
 --- !u!82 &1616688932335625258

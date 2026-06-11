@@ -62,9 +62,17 @@ namespace Unity.XR.XREAL.Samples
         [SerializeField]
         private int m_PoolSize = 10;
 
-        [Tooltip("的がポップする候補位置のTransform配列")]
+        [Tooltip("プレイヤーからの出現距離（円の半径）")]
         [SerializeField]
-        private Transform[] m_SpawnPoints;
+        private float m_SpawnRadius = 10f;
+
+        [Tooltip("出現する高さの中心値（Y座標）")]
+        [SerializeField]
+        private float m_SpawnHeight = 1.4f;
+
+        [Tooltip("高さの揺らぎ幅（中心値 ± この値）")]
+        [SerializeField]
+        private float m_SpawnHeightRange = 0.2f;
 
         [Tooltip("ゲームの制限時間（秒）")]
         [SerializeField]
@@ -114,6 +122,27 @@ namespace Unity.XR.XREAL.Samples
         [SerializeField]
         private float m_LoopEndTime = 100f;
 
+        [Range(0f, 1f)]
+        [Tooltip("BGMの再生音量 (0.0 ～ 1.0)")]
+        [SerializeField]
+        private float m_BGMVolume = 0.5f;
+
+        /// <summary>
+        /// BGMの音量を動的に変更または取得します。
+        /// </summary>
+        public float BGMVolume
+        {
+            get => m_BGMVolume;
+            set
+            {
+                m_BGMVolume = Mathf.Clamp01(value);
+                if (m_BGMSource != null)
+                {
+                    m_BGMSource.volume = m_BGMVolume;
+                }
+            }
+        }
+
         [Header("ゲーム進行設定")]
         [Tooltip("ゲームオーバー後、タップに反応しないクールタイム（秒）")]
         [SerializeField]
@@ -142,6 +171,14 @@ namespace Unity.XR.XREAL.Samples
         [Tooltip("残り時間を表示するゲージ（Image: Filled指定）")]
         [SerializeField]
         private Image m_TimerGauge;
+
+        [Tooltip("一番近い敵の方向を示すインジケーター（矢印などのRectTransform）")]
+        [SerializeField]
+        private RectTransform m_NearestEnemyIndicator;
+
+        [Tooltip("インジケーターの画像が基準としている向きの補正（上向き↑なら0、右向き→なら90など）")]
+        [SerializeField]
+        private float m_IndicatorOffsetAngle = 0f;
 
         [Tooltip("Beam Proモードのキャリブレーション中に表示する案内メッセージ")]
         [SerializeField]
@@ -253,7 +290,7 @@ namespace Unity.XR.XREAL.Samples
             {
                 m_BGMSource.clip = m_BGMClip;
                 m_BGMSource.loop = true; // デフォルトでループさせる
-                m_BGMSource.volume = 0.5f; // 適当な初期音量
+                m_BGMSource.volume = m_BGMVolume; // 設定した音量を適用
                 m_BGMSource.Play();
             }
         }
@@ -293,6 +330,7 @@ namespace Unity.XR.XREAL.Samples
 
                 // UIの更新
                 UpdatePlayingUI();
+                UpdateEnemyIndicator();
             }
             else if (m_CurrentState == GameState.GameOver)
             {
@@ -361,7 +399,6 @@ namespace Unity.XR.XREAL.Samples
         private void TrySpawnTarget()
         {
             if (m_Targets == null || m_Targets.Length == 0) return;
-            if (m_SpawnPoints == null || m_SpawnPoints.Length == 0) return;
 
             // 現在アクティブな的の数を数える
             int activeCount = 0;
@@ -393,12 +430,83 @@ namespace Unity.XR.XREAL.Samples
             // 空きの的があればポップ
             if (spawnTarget != null)
             {
-                Transform spawnPoint = m_SpawnPoints[Random.Range(0, m_SpawnPoints.Length)];
+                Vector3 spawnPos = CalculateRandomSpawnPosition();
                 TargetMovementPattern pattern = (TargetMovementPattern)Random.Range(0, 3);
 
-                Debug.Log($"[GameManager] 的 {spawnTarget.name} をポップします。地点: {spawnPoint.name}, パターン: {pattern}");
-                spawnTarget.Spawn(spawnPoint.position, pattern);
+                Debug.Log($"[GameManager] 的 {spawnTarget.name} をポップします。座標: {spawnPos}, パターン: {pattern}");
+                spawnTarget.Spawn(spawnPos, pattern);
             }
+        }
+
+        /// <summary>
+        /// プレイヤーを中心とした円周上のランダムな位置を算出します。
+        /// </summary>
+        private Vector3 CalculateRandomSpawnPosition()
+        {
+            // プレイヤー（カメラ）の水平位置を中心とする
+            Vector3 center = Camera.main != null
+                ? new Vector3(Camera.main.transform.position.x, 0f, Camera.main.transform.position.z)
+                : Vector3.zero;
+
+            // 0〜360度のランダムな角度
+            float angle = Random.Range(0f, 360f) * Mathf.Deg2Rad;
+
+            float x = center.x + m_SpawnRadius * Mathf.Cos(angle);
+            float z = center.z + m_SpawnRadius * Mathf.Sin(angle);
+            float y = m_SpawnHeight + Random.Range(-m_SpawnHeightRange, m_SpawnHeightRange);
+
+            return new Vector3(x, y, z);
+        }
+
+        /// <summary>
+        /// 画面上のインジケーターを、最も近い敵の方向へ向くように回転させます。
+        /// </summary>
+        private void UpdateEnemyIndicator()
+        {
+            if (m_NearestEnemyIndicator == null || m_Targets == null || Camera.main == null) return;
+
+            TargetObject closestTarget = null;
+            float minDistanceSqr = float.MaxValue;
+            Vector3 cameraPos = Camera.main.transform.position;
+
+            // アクティブなターゲットの中で一番近いものを探す
+            foreach (var target in m_Targets)
+            {
+                if (target.gameObject.activeInHierarchy)
+                {
+                    float distSqr = (target.transform.position - cameraPos).sqrMagnitude;
+                    if (distSqr < minDistanceSqr)
+                    {
+                        minDistanceSqr = distSqr;
+                        closestTarget = target;
+                    }
+                }
+            }
+
+            if (closestTarget == null)
+            {
+                // 敵がいなければ非表示
+                if (m_NearestEnemyIndicator.gameObject.activeSelf)
+                {
+                    m_NearestEnemyIndicator.gameObject.SetActive(false);
+                }
+                return;
+            }
+
+            // 敵がいれば表示
+            if (!m_NearestEnemyIndicator.gameObject.activeSelf)
+            {
+                m_NearestEnemyIndicator.gameObject.SetActive(true);
+            }
+
+            // ターゲットのワールド座標をカメラのローカル座標に変換
+            Vector3 localTargetPos = Camera.main.transform.InverseTransformPoint(closestTarget.transform.position);
+
+            // Z（前後）とX（左右）を用いて平面上の角度を計算
+            float angle = Mathf.Atan2(localTargetPos.z, localTargetPos.x) * Mathf.Rad2Deg;
+
+            // 画像のZ回転を更新（前方z>0が画面上向きとなるよう補正）
+            m_NearestEnemyIndicator.localEulerAngles = new Vector3(0f, 0f, angle - 90f + m_IndicatorOffsetAngle);
         }
 
         /// <summary>
@@ -455,6 +563,12 @@ namespace Unity.XR.XREAL.Samples
             m_GameOverTime = Time.time;
 
             if (m_DifficultyUIContainer != null) m_DifficultyUIContainer.SetActive(false);
+
+            // インジケーターを非表示にする
+            if (m_NearestEnemyIndicator != null && m_NearestEnemyIndicator.gameObject.activeSelf)
+            {
+                m_NearestEnemyIndicator.gameObject.SetActive(false);
+            }
 
             // PCデバッグ用にカーソルを表示・ロック解除
             SetCursorState(false);

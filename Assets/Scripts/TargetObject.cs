@@ -35,6 +35,10 @@ public class TargetObject : MonoBehaviour
     [SerializeField]
     private AudioClip m_HitSound;
 
+    [Tooltip("的の移動中にループ再生する移動音（任意）")]
+    [SerializeField]
+    private AudioClip m_MovementSound;
+
     [Tooltip("被弾してからオブジェクトを非アクティブにするまでのディレイ秒数")]
     [SerializeField]
     private float m_DestroyDelay = 2.0f;
@@ -68,6 +72,13 @@ public class TargetObject : MonoBehaviour
     {
         if (m_TargetRenderer == null) m_TargetRenderer = GetComponent<Renderer>();
         if (m_AudioSource == null) m_AudioSource = gameObject.AddComponent<AudioSource>();
+        
+        // 移動音を3D音響（空間音響）として正しく減衰させる設定
+        if (m_AudioSource != null)
+        {
+            m_AudioSource.spatialBlend = 1.0f;
+        }
+
         m_Collider = GetComponent<Collider>();
         SaveInitialTransform();
     }
@@ -159,8 +170,12 @@ public class TargetObject : MonoBehaviour
             Destroy(effectInstance.gameObject, m_DestroyDelay);
         }
 
-        // 2. 効果音の再生
-        if (m_HitSound != null) m_AudioSource.PlayOneShot(m_HitSound);
+        // 2. 効果音の再生（被弾時の撃破SEは遠くでもハッキリ聞こえるよう2Dで再生）
+        if (m_HitSound != null && m_AudioSource != null)
+        {
+            m_AudioSource.spatialBlend = 0f; // 2D音響に変更
+            m_AudioSource.PlayOneShot(m_HitSound);
+        }
 
         // 3. 指定秒数後にこのオブジェクトを非アクティブ化 (Destroyはせず再利用)
         StartCoroutine(DisableRoutine());
@@ -193,6 +208,13 @@ public class TargetObject : MonoBehaviour
         m_IsMoving = false;
         m_Collider.enabled = false;
         m_TargetRenderer.enabled = false;
+
+        // 移動ループ音を停止
+        if (m_AudioSource != null)
+        {
+            m_AudioSource.Stop();
+            m_AudioSource.loop = false;
+        }
     }
 
     /// <summary>
@@ -215,10 +237,19 @@ public class TargetObject : MonoBehaviour
         m_WaveFrequency = Random.Range(2.0f, 4.0f);
         m_WaveAmplitude = Random.Range(0.5f, 1.2f);
 
+        gameObject.SetActive(true);
+
         m_TargetRenderer.enabled = true;
         m_Collider.enabled = true;
 
-        gameObject.SetActive(true);
+        // 移動ループ音の再生を開始（3D音響に設定）
+        if (m_MovementSound != null && m_AudioSource != null)
+        {
+            m_AudioSource.spatialBlend = 1.0f; // 3D音響に戻す
+            m_AudioSource.clip = m_MovementSound;
+            m_AudioSource.loop = true;
+            m_AudioSource.Play();
+        }
     }
 
     /// <summary>
