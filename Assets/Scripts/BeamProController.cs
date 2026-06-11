@@ -41,6 +41,7 @@ namespace Unity.XR.XREAL.Samples
         private float m_ShootCooldown = 0.5f;
 
         private float m_LastShootTime = -100f;
+        private GameState m_PrevState = GameState.Calibration;
 
         private XREALActions m_XREALActions;
 
@@ -175,15 +176,20 @@ namespace Unity.XR.XREAL.Samples
             // 1. 索敵機能: 常に細いRaycastを飛ばし、ヒットした的を発光させる
             PerformFlashlightDiscovery();
 
+            GameState currentState = GameManager.Instance != null ? GameManager.Instance.CurrentState : GameState.Calibration;
+
             // 2. 射撃判定: 画面タップ（トリガー入力）の検知
-            // ゲームプレイ中のみ射撃を許可する
-            if (GameManager.Instance != null && GameManager.Instance.CurrentState == GameState.Playing)
+            // ゲームプレイ中または難易度選択中のみ射撃を許可する
+            // （キャリブレーション時のタップで即座に誤射しないよう、状態が変わったフレームでは撃たない）
+            if (currentState == GameState.Playing || currentState == GameState.DifficultySelection)
             {
-                if (IsTriggerPressedThisFrame())
+                if (currentState == m_PrevState && IsTriggerPressedThisFrame())
                 {
                     TryShoot();
                 }
             }
+
+            m_PrevState = currentState;
 
             // 3. Appボタン入力による手動キャリブレーション（リセット）の実行
             if (m_XREALActions.XREALButtons.App.WasPressedThisFrame())
@@ -299,6 +305,12 @@ namespace Unity.XR.XREAL.Samples
                 if (hit.collider.TryGetComponent<TargetObject>(out var target))
                 {
                     target.OnHit();
+                    TriggerHaptic(m_HitVibrationAmplitude, m_HitVibrationDuration);
+                    isHit = true;
+                }
+                else if (hit.collider.TryGetComponent<DifficultySelectTarget>(out var diffTarget))
+                {
+                    diffTarget.OnHit();
                     TriggerHaptic(m_HitVibrationAmplitude, m_HitVibrationDuration);
                     isHit = true;
                 }

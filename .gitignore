@@ -115,3 +115,7 @@ Thumbs.db
 
 # Unity Burst compiler debug info
 *_BurstDebugInformation_DoNotShip/
+
+# media files
+*.mp4
+*.mov

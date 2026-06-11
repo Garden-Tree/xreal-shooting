@@ -29,6 +29,32 @@ namespace Unity.XR.XREAL.Samples
         /// </summary>
         public GameState CurrentState => m_CurrentState;
 
+        [System.Serializable]
+        public struct DifficultySettings
+        {
+            public GameDifficulty difficulty;
+            [Tooltip("的がポップする間隔（秒）")]
+            public float spawnInterval;
+            [Tooltip("同時にフィールドに存在できる的の最大数")]
+            public int maxActiveTargets;
+            [Tooltip("プレイヤーの最大ライフ")]
+            public int maxLife;
+        }
+
+        [Header("難易度設定")]
+        [Tooltip("各難易度のパラメータ設定")]
+        [SerializeField]
+        private DifficultySettings[] m_DifficultySettings = new DifficultySettings[]
+        {
+            new DifficultySettings { difficulty = GameDifficulty.EASY, spawnInterval = 2.0f, maxActiveTargets = 2, maxLife = 5 },
+            new DifficultySettings { difficulty = GameDifficulty.NORMAL, spawnInterval = 1.5f, maxActiveTargets = 3, maxLife = 3 },
+            new DifficultySettings { difficulty = GameDifficulty.HARD, spawnInterval = 0.8f, maxActiveTargets = 5, maxLife = 1 }
+        };
+
+        [Tooltip("難易度選択時に表示する的オブジェクトの親オブジェクト（これを表示・非表示する）")]
+        [SerializeField]
+        private GameObject m_DifficultyUIContainer;
+
         [Header("ゲームモード設定")]
         [Tooltip("生成する的のプレハブ")]
         [SerializeField]
@@ -430,6 +456,8 @@ namespace Unity.XR.XREAL.Samples
             m_CurrentState = GameState.GameOver;
             m_GameOverTime = Time.time;
 
+            if (m_DifficultyUIContainer != null) m_DifficultyUIContainer.SetActive(false);
+
             // PCデバッグ用にカーソルを表示・ロック解除
             SetCursorState(false);
 
@@ -554,6 +582,8 @@ namespace Unity.XR.XREAL.Samples
                 target.gameObject.SetActive(false);
             }
 
+            if (m_DifficultyUIContainer != null) m_DifficultyUIContainer.SetActive(false);
+
             ReturnToCalibration();
         }
 
@@ -578,14 +608,83 @@ namespace Unity.XR.XREAL.Samples
         }
 
         /// <summary>
-        /// キャリブレーション（または開始待機）を終了し、ゲームを開始します。
+        /// キャリブレーション（または開始待機）を終了し、難易度選択に移行します。
         /// </summary>
         private void PerformCalibration()
         {
-            Debug.Log("[GameManager] キャリブレーション完了。ゲームを開始します。");
+            Debug.Log("[GameManager] キャリブレーション完了。難易度選択へ移行します。");
 
             // コントローラーのリセンターを実行
             XREALPlugin.RecenterController();
+
+            // 状態を難易度選択中に移行
+            m_CurrentState = GameState.DifficultySelection;
+
+            // PCデバッグ用にカーソルを非表示・ロック（難易度選択中もポインターで操作するため）
+            SetCursorState(true);
+
+            m_GuidanceText.text = "難易度を選択してください\n(的を撃ってスタート)";
+            m_GuidanceText.gameObject.SetActive(true);
+
+            if (m_DifficultyUIContainer != null)
+            {
+                // カメラ（プレイヤーの頭）の位置と向きを取得
+                Transform cameraTransform = Camera.main != null ? Camera.main.transform : transform;
+                
+                // ユーザーの指定した相対位置: X:0, Y:1, Z:10
+                Vector3 relativeOffset = new Vector3(0f, 1.0f, 10.0f);
+
+                // プレイヤーの水平な向き（Y軸の回転のみ）を抽出
+                Quaternion horizontalRotation = Quaternion.Euler(0, cameraTransform.eulerAngles.y, 0);
+
+                // プレイヤーの足元の位置（カメラのX, Zを使い、Yはワールドの0基準とする）
+                // ※もし足元ではなくカメラからの純粋な相対距離にしたい場合は 
+                // Vector3 rootPos = cameraTransform.position; と変更してください。
+                Vector3 rootPos = new Vector3(cameraTransform.position.x, 0f, cameraTransform.position.z);
+
+                // プレイヤーの位置・向きに合わせてオフセットを適用
+                Vector3 spawnPos = rootPos + horizontalRotation * relativeOffset;
+
+                // コンテナを計算した位置に移動
+                m_DifficultyUIContainer.transform.position = spawnPos;
+                
+                // コンテナが常にプレイヤーの方を向くようにする（Y軸のみ）
+                m_DifficultyUIContainer.transform.rotation = horizontalRotation;
+
+                m_DifficultyUIContainer.SetActive(true);
+                var targets = m_DifficultyUIContainer.GetComponentsInChildren<DifficultySelectTarget>(true);
+                foreach (var t in targets) t.ResetTarget();
+            }
+        }
+
+        /// <summary>
+        /// 難易度を選択してゲームを開始します。
+        /// </summary>
+        public void StartGameWithDifficulty(GameDifficulty selectedDifficulty)
+        {
+            if (m_CurrentState != GameState.DifficultySelection) return;
+
+            Debug.Log($"[GameManager] 難易度 {selectedDifficulty} でゲームを開始します。");
+
+            if (m_DifficultyUIContainer != null)
+            {
+                m_DifficultyUIContainer.SetActive(false);
+            }
+
+            // パラメータの適用
+            if (m_DifficultySettings != null)
+            {
+                foreach (var setting in m_DifficultySettings)
+                {
+                    if (setting.difficulty == selectedDifficulty)
+                    {
+                        m_SpawnInterval = setting.spawnInterval;
+                        m_MaxActiveTargets = setting.maxActiveTargets;
+                        m_MaxLife = setting.maxLife;
+                        break;
+                    }
+                }
+            }
 
             // インスペクターの設定値の安全チェック（シリアライズ破壊対策）
             if (m_GameDuration <= 0f) m_GameDuration = 30f;
@@ -639,6 +738,8 @@ namespace Unity.XR.XREAL.Samples
     {
         /// <summary> キャリブレーション中（開始待ち） </summary>
         Calibration,
+        /// <summary> 難易度選択中 </summary>
+        DifficultySelection,
         /// <summary> ゲームプレイ中 </summary>
         Playing,
         /// <summary> ゲーム終了 </summary>
