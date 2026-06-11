@@ -18,8 +18,6 @@ namespace Unity.XR.XREAL.Samples
         /// </summary>
         public static GameManager Instance { get; private set; }
 
-
-
         [Header("ゲーム状態")]
         [SerializeField]
         private GameState m_CurrentState = GameState.Calibration;
@@ -72,7 +70,7 @@ namespace Unity.XR.XREAL.Samples
         [SerializeField]
         private float m_GameDuration = 30f;
 
-        [Tooltip("プレイヤーの最大ライフ（3回までOK、4回目でゲームオーバー）")]
+        [Tooltip("プレイヤーの最大ライフ（ライフが0未満になるとゲームオーバー）")]
         [SerializeField]
         private int m_MaxLife = 3;
 
