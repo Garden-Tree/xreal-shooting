@@ -39,7 +39,12 @@ namespace Unity.XR.XREAL.Samples
         [SerializeField]
         private float m_ShootCooldown = 0.5f;
 
+        [Tooltip("ゲーム状態の遷移直後に射撃入力を無視する時間（秒）。キャリブレーション時のタップが入力経路の遅延によって誤射となるのを防ぎます。")]
+        [SerializeField]
+        private float m_StateTransitionShootLockout = 0.5f;
+
         private float m_LastShootTime = -100f;
+        private float m_StateChangeTime = -100f;
         private GameState m_PrevState = GameState.Calibration;
 
         private XREALActions m_XREALActions;
@@ -225,12 +230,20 @@ namespace Unity.XR.XREAL.Samples
 
             GameState currentState = GameManager.Instance != null ? GameManager.Instance.CurrentState : GameState.Calibration;
 
+            // 状態が変わったタイミングを記録（遷移直後の射撃ロックアウトに使用）
+            if (currentState != m_PrevState)
+            {
+                m_StateChangeTime = Time.time;
+            }
+
             // 2. 射撃判定: 画面タップ（トリガー入力）の検知
             // ゲームプレイ中または難易度選択中のみ射撃を許可する
-            // （キャリブレーション時のタップで即座に誤射しないよう、状態が変わったフレームでは撃たない）
+            // キャリブレーション時のタップは入力経路（XREALActions / XREALInput / Pointer）によって
+            // 検知フレームがずれることがあるため、状態遷移から一定時間は射撃入力を無視して誤射を防ぐ
             if (currentState == GameState.Playing || currentState == GameState.DifficultySelection)
             {
-                if (currentState == m_PrevState && IsTriggerPressedThisFrame())
+                bool inLockout = Time.time - m_StateChangeTime < m_StateTransitionShootLockout;
+                if (!inLockout && IsTriggerPressedThisFrame())
                 {
                     TryShoot();
                 }

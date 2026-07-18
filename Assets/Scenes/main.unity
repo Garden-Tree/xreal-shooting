@@ -20018,16 +20018,16 @@ MonoBehaviour:
   m_CurrentState: 0
   m_DifficultySettings:
   - difficulty: 0
-    spawnInterval: 1.2
-    maxActiveTargets: 4
+    spawnInterval: 1.6
+    maxActiveTargets: 2
     maxLife: 5
   - difficulty: 1
-    spawnInterval: 1
-    maxActiveTargets: 6
+    spawnInterval: 1.2
+    maxActiveTargets: 4
     maxLife: 3
   - difficulty: 2
     spawnInterval: 0.8
-    maxActiveTargets: 8
+    maxActiveTargets: 6
     maxLife: 1
   m_DifficultyUIContainer: {fileID: 346905490}
   m_TargetPrefab: {fileID: 5734172742432302554, guid: fa22d392de1ef4192875e8a33ffac28f, type: 3}
@@ -20057,7 +20057,7 @@ MonoBehaviour:
   m_TimerGauge: {fileID: 22255051}
   m_NearestEnemyIndicator: {fileID: 1166158814}
   m_IndicatorOffsetAngle: 0
-  m_CalibrationMessage: "\u771F\u6B63\u9762\u306BBeam Pro\u3092\u5411\u3051\u3066\u3001\n\u753B\u9762\u3092\u30BF\u30C3\u30D7\u3057\u3066\u304F\u3060\u3055\u3044"
+  m_CalibrationMessage: "Beam Pro\u3092\u81EA\u7136\u306B\u6301\u3063\u3066\n\u753B\u9762\u3092\u30BF\u30C3\u30D7\u3057\u3066\u304F\u3060\u3055\u3044"
   m_StartMessage: START!
 --- !u!4 &941365228
 Transform:
@@ -25175,8 +25175,9 @@ MonoBehaviour:
     m_Bits: 128
   m_MaxDiscoveryDistance: 20
   m_MaxShootDistance: 20
-  m_AimAssistRadius: 0.2
+  m_AimAssistRadius: 0.4
   m_ShootCooldown: 0.5
+  m_StateTransitionShootLockout: 0.5
   m_UseLightBeamVisual: 1
   m_LightBeamWidthStart: 0.01
   m_LightBeamWidthEnd: 3
